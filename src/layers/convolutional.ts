@@ -1216,6 +1216,10 @@ export class UpSampling2D extends Layer {
   }
 
   computeOutputShape(inputShape: Shape): Shape {
+    if (inputShape == null) {
+      return inputShape;
+    }
+
     if (this.dataFormat === 'channelsFirst') {
       const height = this.size[0] * inputShape[2];
       const width = this.size[1] * inputShape[3];
