@@ -12,22 +12,27 @@
 
 // tslint:disable:max-line-length
 import * as tfc from '@tensorflow/tfjs-core';
-import {doc, io, ModelPredictConfig, Optimizer, Scalar, serialization, Tensor, Tensor1D, tensor1d, util} from '@tensorflow/tfjs-core';
+import {io, ModelPredictConfig, Optimizer, Scalar, serialization, Tensor, Tensor1D, tensor1d, util} from '@tensorflow/tfjs-core';
 
+import {getScalar} from '../backend/state';
 import * as K from '../backend/tfjs_backend';
-import {BaseLogger, Callback, CallbackList, CustomCallbackConfig, disposeTensorsInLogs, History, standardizeCallbacks, UnresolvedLogs} from '../callbacks';
+import {BaseCallback, BaseLogger, CallbackList, CustomCallbackConfig, History, standardizeCallbacks} from '../base_callbacks';
+import {nameScope} from '../common';
 import {NotImplementedError, RuntimeError, ValueError} from '../errors';
+import {disposeTensorsInLogs, UnresolvedLogs} from '../logs';
 import * as losses from '../losses';
 import * as Metrics from '../metrics';
 import * as optimizers from '../optimizers';
-import {LossOrMetricFn, NamedTensorMap, Shape, SymbolicTensor} from '../types';
+import {LossOrMetricFn, NamedTensorMap, Shape} from '../types';
 import {count, pyListRepeat, singletonOrArray, unique} from '../utils/generic_utils';
 import {printSummary} from '../utils/layer_utils';
 import {range} from '../utils/math_utils';
 import {LayerVariable} from '../variables';
 
+import {Container, ContainerConfig} from './container';
 import {execute, FeedDict} from './executor';
-import {Container, ContainerConfig} from './topology';
+import {SymbolicTensor} from './topology';
+
 // tslint:enable:max-line-length
 
 /**
@@ -505,7 +510,7 @@ export interface ModelFitConfig {
    * Can consist of one or more of the following fields: `onTrainBegin`,
    * `onTrainEnd`, `onEpochBegin`, `onEpochEnd`, `onBatchBegin`, `onBatchEnd`.
    */
-  callbacks?: Callback[]|CustomCallbackConfig|CustomCallbackConfig[];
+  callbacks?: BaseCallback[]|CustomCallbackConfig|CustomCallbackConfig[];
 
   /**
    * Float between 0 and 1: fraction of the training data
@@ -615,7 +620,7 @@ export interface ModelCompileConfig {
  * See also:
  *   `Sequential`, `loadModel`.
  */
-@doc({heading: 'Models', subheading: 'Classes'})
+/** @doc {heading: 'Models', subheading: 'Classes'} */
 export class Model extends Container implements tfc.InferenceModel {
   static className = 'Model';
   optimizer: Optimizer;
@@ -685,7 +690,7 @@ export class Model extends Container implements tfc.InferenceModel {
    *   `console.log`. For example, you can use `x => {}` to mute the printed
    *   messages in the console.
    */
-  @doc({heading: 'Models', subheading: 'Classes'})
+  /** @doc {heading: 'Models', subheading: 'Classes'} */
   summary(
       lineLength?: number, positions?: number[],
       printFn:
@@ -708,7 +713,9 @@ export class Model extends Container implements tfc.InferenceModel {
    * @param config a `ModelCompileConfig` specifying the loss, optimizer, and
    * metrics to be used for fitting and evaluating this model.
    */
-  @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [0]})
+  /**
+   * @doc {heading: 'Models', subheading: 'Classes', configParamIndices: [0]}
+   */
   compile(config: ModelCompileConfig): void {
     if (config.loss == null) {
       config.loss = [];
@@ -794,7 +801,7 @@ export class Model extends Container implements tfc.InferenceModel {
     // Porting Note: In PyKeras, metrics_tensors are symbolic tensor objects.
     //   Here, metricsTensors are TypeScript functions. This difference is due
     //   to the difference in symbolic/imperative property of the backends.
-    K.nameScope('loss', () => {
+    nameScope('loss', () => {
       for (let i = 0; i < this.outputs.length; ++i) {
         if (skipTargetIndices.indexOf(i) !== -1) {
           continue;
@@ -828,7 +835,7 @@ export class Model extends Container implements tfc.InferenceModel {
           this.metricsTensors.push([metricTensor, outputIndex]);
         };
 
-    K.nameScope('metric', () => {
+    nameScope('metric', () => {
       for (let i = 0; i < this.outputs.length; ++i) {
         if (skipTargetIndices.indexOf(i) !== -1) {
           continue;
@@ -893,7 +900,7 @@ export class Model extends Container implements tfc.InferenceModel {
 
             // TODO(cais): Add weighting and masking to metricResult.
             let metricResult: LossOrMetricFn;
-            K.nameScope(metricName, () => {
+            nameScope(metricName, () => {
               metricResult = weightedMetricFn;
             });
             appendMetric(i, metricName, metricResult);
@@ -961,10 +968,12 @@ export class Model extends Container implements tfc.InferenceModel {
    *   and/or metrics). The attribute `model.metricsNames`
    *   will give you the display labels for the scalar outputs.
    */
-  @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [2]})
+  /**
+   * @doc {heading: 'Models', subheading: 'Classes', configParamIndices: [2]}
+   */
   evaluate(
-      x: Tensor|Tensor[], y: Tensor|Tensor[], config: ModelEvaluateConfig = {}):
-      Scalar|Scalar[] {
+      x: Tensor|Tensor[], y: Tensor|Tensor[],
+      config: ModelEvaluateConfig = {}): Scalar|Scalar[] {
     const batchSize = config.batchSize == null ? 32 : config.batchSize;
 
     // TODO(cais): Standardize `config.sampleWeights` as well.
@@ -1197,7 +1206,9 @@ export class Model extends Container implements tfc.InferenceModel {
    *   and the model's expectations, or in case a stateful model receives a
    *   number of samples that is not a multiple of the batch size.
    */
-  @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [1]})
+  /**
+   * @doc {heading: 'Models', subheading: 'Classes', configParamIndices: [1]}
+   */
   predict(x: Tensor|Tensor[], config: ModelPredictConfig = {}): Tensor
       |Tensor[] {
     checkInputData(x, this.inputNames, this.feedInputShapes, false);
@@ -1221,7 +1232,7 @@ export class Model extends Container implements tfc.InferenceModel {
    * @param x: Input samples, as an Tensor
    * @return Tensor(s) of predictions
    */
-  @doc({heading: 'Models', subheading: 'Classes'})
+  /** @doc {heading: 'Models', subheading: 'Classes'} */
   predictOnBatch(x: Tensor): Tensor|Tensor[] {
     checkInputData(x, this.inputNames, this.feedInputShapes, true);
     // TODO(cais): Take care of the learning_phase boolean flag.
@@ -1302,9 +1313,9 @@ export class Model extends Container implements tfc.InferenceModel {
   private async fitLoop(
       f: (data: Tensor[]) => Scalar[], ins: Tensor[], outLabels?: string[],
       batchSize?: number, epochs?: number, verbose?: number,
-      callbacks?: Callback[], valF?: (data: Tensor[]) => Scalar[],
+      callbacks?: BaseCallback[], valF?: (data: Tensor[]) => Scalar[],
       valIns?: Tensor[], shuffle?: boolean|string, callbackMetrics?: string[],
-      initialEpoch = 0, stepsPerEpoch?: number,
+      initialEpoch?: number, stepsPerEpoch?: number,
       validationSteps?: number): Promise<History> {
     if (batchSize == null) {
       batchSize = 32;
@@ -1345,7 +1356,7 @@ export class Model extends Container implements tfc.InferenceModel {
     if (callbacks == null) {
       callbacks = [new BaseLogger()];
     } else {
-      callbacks = [new BaseLogger() as Callback].concat(callbacks);
+      callbacks = ([new BaseLogger()] as BaseCallback[]).concat(callbacks);
     }
     callbacks = callbacks.concat([this.history]);
 
@@ -1359,6 +1370,7 @@ export class Model extends Container implements tfc.InferenceModel {
     callbackList.setModel(this);
     callbackList.setParams({
       epochs,
+      initialEpoch,
       steps: stepsPerEpoch,
       verbose,
       doValidation,
@@ -1489,20 +1501,20 @@ export class Model extends Container implements tfc.InferenceModel {
           const batchOuts = f(insBatch);
           if (batchIndex === 0) {
             for (let i = 0; i < batchOuts.length; ++i) {
-              outs.push(K.getScalar(0));
+              outs.push(getScalar(0));
             }
           }
           for (let i = 0; i < batchOuts.length; ++i) {
             const batchOut = batchOuts[i];
-            outs[i] = tfc.add(
-                          outs[i],
-                          K.scalarTimesArray(
-                              K.getScalar(batchEnd - batchStart), batchOut)) as
+            outs[i] =
+                tfc.add(
+                    outs[i],
+                    tfc.mul(getScalar(batchEnd - batchStart), batchOut)) as
                 Scalar;
           }
         }
         for (let i = 0; i < outs.length; ++i) {
-          outs[i] = tfc.div(outs[i], K.getScalar(numSamples)) as Scalar;
+          outs[i] = tfc.div(outs[i], getScalar(numSamples)) as Scalar;
         }
       }
       return outs;
@@ -1598,7 +1610,9 @@ export class Model extends Container implements tfc.InferenceModel {
    * @exception ValueError In case of mismatch between the provided input data
    *   and what the model expects.
    */
-  @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [2]})
+  /**
+   * @doc {heading: 'Models', subheading: 'Classes', configParamIndices: [2]}
+   */
   async fit(
       x: Tensor|Tensor[]|{[inputName: string]: Tensor},
       y: Tensor|Tensor[]|{[inputName: string]: Tensor},
@@ -1785,8 +1799,8 @@ export class Model extends Container implements tfc.InferenceModel {
     const callbacks = standardizeCallbacks(config.callbacks);
     const out = await this.fitLoop(
         trainFunction, ins, outLabels, batchSize, config.epochs, config.verbose,
-        callbacks, valFunction, valIns, config.shuffle, callbackMetrics, null,
-        null, null);
+        callbacks, valFunction, valIns, config.shuffle, callbackMetrics,
+        config.initialEpoch, null, null);
     if (needValidationDisposal) {
       valIns.forEach(tensor => tensor.dispose());
       inputs.forEach(tensor => tensor.dispose());
@@ -1794,7 +1808,6 @@ export class Model extends Container implements tfc.InferenceModel {
     }
     return out;
     // TODO(cais): Add value to outLabels.
-    // TODO(cais): Add initialEpoch.
   }
 
   /**
@@ -1898,7 +1911,9 @@ export class Model extends Container implements tfc.InferenceModel {
    *   saving, such as byte sizes of the saved artifacts for the model's
    *   topology and weight values.
    */
-  @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [1]})
+  /**
+   * @doc {heading: 'Models', subheading: 'Classes', configParamIndices: [1]}
+   */
   // tslint:enable:max-line-length
   async save(handlerOrURL: io.IOHandler|string, config?: io.SaveConfig):
       Promise<io.SaveResult> {

@@ -28,6 +28,7 @@ import {getRegularizer, Regularizer, RegularizerIdentifier, serializeRegularizer
 import {Kwargs, Shape} from '../types';
 import {convOutputLength, deconvLength, normalizeArray} from '../utils/conv_utils';
 import * as generic_utils from '../utils/generic_utils';
+import {getExactlyOneShape, getExactlyOneTensor} from '../utils/types_utils';
 import {LayerVariable} from '../variables';
 // tslint:enable:max-line-length
 
@@ -313,7 +314,7 @@ export abstract class BaseConv extends Layer {
   protected readonly dataFormat: DataFormat;
   protected readonly activation: Activation;
   protected readonly useBias: boolean;
-  protected readonly dilationRate: number|[number]|[number, number];
+  protected readonly dilationRate: number[];
 
   // Bias-related members are here because all convolution subclasses use the
   // same configuration parmeters to control bias.  Kernel-related members
@@ -353,7 +354,9 @@ export abstract class BaseConv extends Layer {
     this.biasConstraint = getConstraint(config.biasConstraint);
     this.biasRegularizer = getRegularizer(config.biasRegularizer);
     this.activityRegularizer = getRegularizer(config.activityRegularizer);
-    this.dilationRate = config.dilationRate == null ? 1 : config.dilationRate;
+    this.dilationRate = normalizeArray(
+        config.dilationRate == null ? 1 : config.dilationRate, rank,
+        'dilationRate');
     if (this.rank === 1 &&
         (Array.isArray(this.dilationRate) &&
          (this.dilationRate as number[]).length !== 1)) {
@@ -383,6 +386,25 @@ export abstract class BaseConv extends Layer {
       throw new ValueError(
           `BaseConv expects config.kernelSize to be number or number[] with ` +
           `length 1 or 2, but received ${JSON.stringify(config.kernelSize)}.`);
+  }
+
+  getConfig(): serialization.ConfigDict {
+    const config: serialization.ConfigDict = {
+      kernelSize: this.kernelSize,
+      strides: this.strides,
+      padding: this.padding,
+      dataFormat: this.dataFormat,
+      dilationRate: this.dilationRate,
+      activation: serializeActivation(this.activation),
+      useBias: this.useBias,
+      biasInitializer: serializeInitializer(this.biasInitializer),
+      biasRegularizer: serializeRegularizer(this.biasRegularizer),
+      activityRegularizer: serializeRegularizer(this.activityRegularizer),
+      biasConstraint: serializeConstraint(this.biasConstraint)
+    };
+    const baseConfig = super.getConfig();
+    Object.assign(config, baseConfig);
+    return config;
   }
 }
 
@@ -415,7 +437,7 @@ export abstract class Conv extends BaseConv {
   }
 
   build(inputShape: Shape|Shape[]): void {
-    inputShape = generic_utils.getExactlyOneShape(inputShape);
+    inputShape = getExactlyOneShape(inputShape);
     const channelAxis =
         this.dataFormat === 'channelsFirst' ? 1 : inputShape.length - 1;
     if (inputShape[channelAxis] == null) {
@@ -442,14 +464,14 @@ export abstract class Conv extends BaseConv {
 
   call(inputs: Tensor|Tensor[], kwargs: Kwargs): Tensor|Tensor[] {
     return tidy(() => {
-      inputs = generic_utils.getExactlyOneTensor(inputs);
+      inputs = getExactlyOneTensor(inputs);
       let outputs: Tensor;
       const biasValue = this.bias == null ? null : this.bias.read();
 
       if (this.rank === 1) {
         outputs = conv1dWithBias(
             inputs, this.kernel.read(), biasValue, this.strides[0],
-            this.padding, this.dataFormat, this.dilationRate as number);
+            this.padding, this.dataFormat, this.dilationRate[0]);
       } else if (this.rank === 2) {
         // TODO(cais): Move up to constructor.
         outputs = conv2dWithBias(
@@ -467,7 +489,7 @@ export abstract class Conv extends BaseConv {
   }
 
   computeOutputShape(inputShape: Shape|Shape[]): Shape|Shape[] {
-    inputShape = generic_utils.getExactlyOneShape(inputShape);
+    inputShape = getExactlyOneShape(inputShape);
     const newSpace: number[] = [];
     const space = (this.dataFormat === 'channelsLast') ?
         inputShape.slice(1, inputShape.length - 1) :
@@ -492,23 +514,11 @@ export abstract class Conv extends BaseConv {
   }
 
   getConfig(): serialization.ConfigDict {
-    const config: serialization.ConfigDict = {
-      rank: this.rank,
+    const config = {
       filters: this.filters,
-      kernelSize: this.kernelSize,
-      strides: this.strides,
-      padding: this.padding,
-      dataFormat: this.dataFormat,
-      dilationRate: this.dilationRate,
-      activation: serializeActivation(this.activation),
-      useBias: this.useBias,
       kernelInitializer: serializeInitializer(this.kernelInitializer),
-      biasInitializer: serializeInitializer(this.biasInitializer),
       kernelRegularizer: serializeRegularizer(this.kernelRegularizer),
-      biasRegularizer: serializeRegularizer(this.biasRegularizer),
-      activityRegularizer: serializeRegularizer(this.activityRegularizer),
-      kernelConstraint: serializeConstraint(this.kernelConstraint),
-      biasConstraint: serializeConstraint(this.biasConstraint)
+      kernelConstraint: serializeConstraint(this.kernelConstraint)
     };
     const baseConfig = super.getConfig();
     Object.assign(config, baseConfig);
@@ -617,7 +627,7 @@ export class Conv2DTranspose extends Conv2D {
   }
 
   build(inputShape: Shape|Shape[]): void {
-    inputShape = generic_utils.getExactlyOneShape(inputShape);
+    inputShape = getExactlyOneShape(inputShape);
 
     if (inputShape.length !== 4) {
       throw new ValueError(
@@ -652,7 +662,7 @@ export class Conv2DTranspose extends Conv2D {
 
   call(inputs: Tensor|Tensor[], kwargs: Kwargs): Tensor|Tensor[] {
     return tfc.tidy(() => {
-      let input = generic_utils.getExactlyOneTensor(inputs);
+      let input = getExactlyOneTensor(inputs);
       if (input.shape.length !== 4) {
         throw new ValueError(
             `Conv2DTranspose.call() expects input tensor to be rank-4, but ` +
@@ -712,7 +722,7 @@ export class Conv2DTranspose extends Conv2D {
   }
 
   computeOutputShape(inputShape: Shape|Shape[]): Shape|Shape[] {
-    inputShape = generic_utils.getExactlyOneShape(inputShape);
+    inputShape = getExactlyOneShape(inputShape);
     const outputShape = inputShape.slice();
 
     let channelAxis: number;
@@ -847,7 +857,7 @@ export class SeparableConv extends Conv {
   }
 
   build(inputShape: Shape|Shape[]): void {
-    inputShape = generic_utils.getExactlyOneShape(inputShape);
+    inputShape = getExactlyOneShape(inputShape);
     if (inputShape.length < this.rank + 2) {
       throw new ValueError(
           `Inputs to SeparableConv${this.rank}D should have rank ` +
@@ -895,7 +905,7 @@ export class SeparableConv extends Conv {
 
   call(inputs: Tensor|Tensor[], kwargs: Kwargs): Tensor|Tensor[] {
     return tidy(() => {
-      inputs = generic_utils.getExactlyOneTensor(inputs);
+      inputs = getExactlyOneTensor(inputs);
 
       let output: Tensor;
       if (this.rank === 1) {
@@ -1128,7 +1138,7 @@ export class Cropping2D extends Layer {
 
   call(inputs: Tensor|Tensor[], kwargs: Kwargs): Tensor|Tensor[] {
     return tidy(() => {
-      inputs = generic_utils.getExactlyOneTensor(inputs);
+      inputs = getExactlyOneTensor(inputs);
 
       if (this.dataFormat === 'channelsLast') {
         const hSliced = K.sliceAlongAxis(
@@ -1210,9 +1220,9 @@ export class UpSampling2D extends Layer {
   constructor(config: UpSampling2DLayerConfig) {
     super(config);
     this.inputSpec = [{ndim: 4}];
-    this.size = config.size === undefined ? this.DEFAULT_SIZE : config.size;
+    this.size = config.size == null ? this.DEFAULT_SIZE : config.size;
     this.dataFormat =
-        config.dataFormat === undefined ? 'channelsLast' : config.dataFormat;
+        config.dataFormat == null ? 'channelsLast' : config.dataFormat;
   }
 
   computeOutputShape(inputShape: Shape): Shape {
@@ -1221,19 +1231,21 @@ export class UpSampling2D extends Layer {
     }
 
     if (this.dataFormat === 'channelsFirst') {
-      const height = this.size[0] * inputShape[2];
-      const width = this.size[1] * inputShape[3];
+      const height =
+          inputShape[2] == null ? null : this.size[0] * inputShape[2];
+      const width = inputShape[3] == null ? null : this.size[1] * inputShape[3];
       return [inputShape[0], inputShape[1], height, width];
     } else {
-      const height = this.size[0] * inputShape[1];
-      const width = this.size[1] * inputShape[2];
+      const height =
+          inputShape[1] == null ? null : this.size[0] * inputShape[1];
+      const width = inputShape[2] == null ? null : this.size[1] * inputShape[2];
       return [inputShape[0], height, width, inputShape[3]];
     }
   }
 
   call(inputs: Tensor|Tensor[], kwargs: Kwargs): Tensor|Tensor[] {
     return tfc.tidy(() => {
-      let input = generic_utils.getExactlyOneTensor(inputs) as Tensor4D;
+      let input = getExactlyOneTensor(inputs) as Tensor4D;
       const inputShape = input.shape;
 
       if (this.dataFormat === 'channelsFirst') {

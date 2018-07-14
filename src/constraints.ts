@@ -12,9 +12,10 @@
 
 // tslint:disable:max-line-length
 import * as tfc from '@tensorflow/tfjs-core';
-import {doc, serialization, Tensor, tidy} from '@tensorflow/tfjs-core';
+import {serialization, Tensor, tidy} from '@tensorflow/tfjs-core';
 
-import * as K from './backend/tfjs_backend';
+import {epsilon} from './backend/common';
+import {getScalar} from './backend/state';
 import {deserializeKerasObject, serializeKerasObject} from './utils/generic_utils';
 // tslint:enable:max-line-length
 
@@ -22,13 +23,19 @@ import {deserializeKerasObject, serializeKerasObject} from './utils/generic_util
  * Helper function used by many of the Constraints to find the L2Norms.
  */
 function calcL2Norms(w: Tensor, axis: number): Tensor {
-  return tidy(() => tfc.sqrt(tfc.sum(K.square(w), axis, true)));
+  return tidy(() => tfc.sqrt(tfc.sum(tfc.mulStrict(w, w), axis, true)));
 }
 
 /**
  * Base class for functions that impose constraints on weight values
  */
-@doc({heading: 'Constraints', subheading: 'Classes', namespace: 'constraints'})
+/**
+ * @doc {
+ *   heading: 'Constraints',
+ *   subheading: 'Classes',
+ *   namespace: 'constraints'
+ * }
+ */
 export abstract class Constraint extends serialization.Serializable {
   /* Porting note: was __call__, apply chosen to match other similar choices */
   abstract apply(w: Tensor): Tensor;
@@ -88,9 +95,7 @@ export class MaxNorm extends Constraint {
     return tidy(() => {
       const norms = calcL2Norms(w, this.axis);
       const desired = tfc.clipByValue(norms, 0, this.maxValue);
-      return tfc.mul(
-          w,
-          tfc.div(desired, K.scalarPlusArray(K.getScalar(K.epsilon()), norms)));
+      return tfc.mul(w, tfc.div(desired, tfc.add(getScalar(epsilon()), norms)));
     });
   }
 
@@ -133,9 +138,7 @@ export class UnitNorm extends Constraint {
   apply(w: Tensor): Tensor {
     return tidy(
         () => tfc.div(
-            w,
-            K.scalarPlusArray(
-                K.getScalar(K.epsilon()), calcL2Norms(w, this.axis))));
+            w, tfc.add(getScalar(epsilon()), calcL2Norms(w, this.axis))));
   }
 
   getConfig(): serialization.ConfigDict {
@@ -215,13 +218,11 @@ export class MinMaxNorm extends Constraint {
     return tidy(() => {
       const norms = calcL2Norms(w, this.axis);
       const desired = tfc.add(
-          K.scalarTimesArray(
-              K.getScalar(this.rate),
+          tfc.mul(
+              getScalar(this.rate),
               tfc.clipByValue(norms, this.minValue, this.maxValue)),
-          K.scalarTimesArray(K.getScalar(1.0 - this.rate), norms));
-      return tfc.mul(
-          w,
-          tfc.div(desired, K.scalarPlusArray(K.getScalar(K.epsilon()), norms)));
+          tfc.mul(getScalar(1.0 - this.rate), norms));
+      return tfc.mul(w, tfc.div(desired, tfc.add(getScalar(epsilon()), norms)));
     });
   }
 

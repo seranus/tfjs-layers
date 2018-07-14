@@ -20,13 +20,13 @@ import {imageDataFormat} from '../backend/common';
 // tslint:disable:max-line-length
 import * as K from '../backend/tfjs_backend';
 import {checkDataFormat, DataFormat} from '../common';
-import {Constraint, ConstraintIdentifier, getConstraint} from '../constraints';
+import {Constraint, ConstraintIdentifier, getConstraint, serializeConstraint} from '../constraints';
 import {ValueError} from '../errors';
-import {getInitializer, Initializer, InitializerIdentifier} from '../initializers';
-import {getRegularizer, Regularizer, RegularizerIdentifier} from '../regularizers';
+import {getInitializer, Initializer, InitializerIdentifier, serializeInitializer} from '../initializers';
+import {getRegularizer, Regularizer, RegularizerIdentifier, serializeRegularizer} from '../regularizers';
 import {Kwargs, Shape} from '../types';
 import {convOutputLength} from '../utils/conv_utils';
-import {getExactlyOneShape, getExactlyOneTensor} from '../utils/generic_utils';
+import {getExactlyOneShape, getExactlyOneTensor} from '../utils/types_utils';
 import {LayerVariable} from '../variables';
 
 import {BaseConv, BaseConvLayerConfig, ConvLayerConfig, preprocessConv2DInput} from './convolutional';
@@ -204,6 +204,18 @@ export class DepthwiseConv2D extends BaseConv {
       // In this case, assume 'channelsLast'.
       return [inputShape[0], outRows, outCols, outFilters];
     }
+  }
+
+  getConfig(): serialization.ConfigDict {
+    const config = super.getConfig();
+    config['depthMultiplier'] = this.depthMultiplier;
+    config['depthwiseInitializer'] =
+        serializeInitializer(this.depthwiseInitializer);
+    config['depthwiseRegularizer'] =
+        serializeRegularizer(this.depthwiseRegularizer);
+    config['depthwiseConstraint'] =
+        serializeConstraint(this.depthwiseRegularizer);
+    return config;
   }
 }
 serialization.SerializationMap.register(DepthwiseConv2D);

@@ -39,7 +39,7 @@ import {GRU, LSTM, rnn, RNN, RNNCell} from './recurrent';
  */
 function rnnStepForTest(inputs: Tensor, states: Tensor[]): [Tensor, Tensor[]] {
   const mean = tfc.mean(inputs) as Scalar;
-  const newStates = states.map(state => K.scalarPlusArray(mean, state));
+  const newStates = states.map(state => tfc.add(mean, state));
   const output = tfc.neg(newStates[0]);
   return [output, newStates];
 }
@@ -200,7 +200,7 @@ class RNNCellForTest extends RNNCell {
     const dataInputs = inputs[0];
     const states = inputs.slice(1);
     const mean = tfc.mean(dataInputs) as Scalar;
-    const newStates = states.map(state => K.scalarPlusArray(mean, state));
+    const newStates = states.map(state => tfc.add(mean, state));
     const output = tfc.neg(newStates[0]);
     return [output].concat(newStates);
   }
@@ -357,7 +357,7 @@ describeMathCPUAndGPU('RNN-Layer-Math', () => {
         [[[1, 2], [3, 4], [5, 6]], [[10, 20], [30, 40], [50, 60]]], [2, 3, 2]);
     const outputs = rnn.apply(inputs) as Tensor;
     expectTensorsClose(
-        outputs, K.scalarTimesArray(scalar(-57.75), tfc.ones([2, 4])));
+        outputs, tfc.mul(scalar(-57.75), tfc.ones([2, 4])));
   });
 
   it('apply: 1 state: returnSequences=true, returnState=false', () => {
@@ -449,7 +449,7 @@ describeMathCPUAndGPU('RNN-Layer-Math', () => {
     const outputs =
         rnn.apply(inputs, {'initialState': [tfc.ones([2, 4])]}) as Tensor;
     expectTensorsClose(
-        outputs, K.scalarTimesArray(scalar(-58.75), tfc.ones([2, 4])));
+        outputs, tfc.mul(scalar(-58.75), tfc.ones([2, 4])));
   });
 
   it('call: with 2 initialStates', () => {
@@ -459,16 +459,16 @@ describeMathCPUAndGPU('RNN-Layer-Math', () => {
         [[[1, 2], [3, 4], [5, 6]], [[10, 20], [30, 40], [50, 60]]], [2, 3, 2]);
     const outputs = rnn.apply(inputs, {
       'initialState': [
-        tfc.ones([2, 4]), K.scalarTimesArray(scalar(2), tfc.ones([2, 5]))
+        tfc.ones([2, 4]), tfc.mul(scalar(2), tfc.ones([2, 5]))
       ]
     }) as Tensor[];
     expect(outputs.length).toEqual(3);
     expectTensorsClose(
-        outputs[0], K.scalarTimesArray(scalar(-58.75), tfc.ones([2, 4])));
+        outputs[0], tfc.mul(scalar(-58.75), tfc.ones([2, 4])));
     expectTensorsClose(
-        outputs[1], K.scalarTimesArray(scalar(58.75), tfc.ones([2, 4])));
+        outputs[1], tfc.mul(scalar(58.75), tfc.ones([2, 4])));
     expectTensorsClose(
-        outputs[2], K.scalarTimesArray(scalar(59.75), tfc.ones([2, 5])));
+        outputs[2], tfc.mul(scalar(59.75), tfc.ones([2, 5])));
   });
 
   it('call with incorrect number of initialStates leads to ValueError', () => {
@@ -536,7 +536,89 @@ describeMathCPUAndGPU('SimpleRNN Tensor', () => {
 
   // TODO(cais): Add test for the default recurrent initializer ('Orthogonal')
   //   when it becomes available.
-  // TODO(cais): Test dropout and recurrentDropout when implemented.
+
+  const dropouts = [0.0, 0.1];
+  const trainings = [true, false];
+  for (const training of trainings) {
+    for (const dropout of dropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, dropout=${dropout}`;
+      it(testTitle, () => {
+        const timeSteps = 3;
+        const simpleRNN = tfl.layers.simpleRNN({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          dropout,
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(simpleRNN.apply(input, kwargs) as Tensor);
+          if (dropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(1  * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, inputSize], 0, 1, 'float32');
+          } else {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
+
+  const recurrentDropouts = [0.0, 0.1];
+  for (const training of trainings) {
+    for (const recurrentDropout of recurrentDropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, recurrentDropout=${recurrentDropout}`;
+      it(testTitle, () => {
+        const timeSteps = 3;
+        const simpleRNN = tfl.layers.simpleRNN({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          recurrentDropout,
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(simpleRNN.apply(input, kwargs) as Tensor);
+          if (recurrentDropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(1 * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, units], 0, 1, 'float32');
+          } else {
+              expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
 
   const activations = ['linear', 'tanh'];
   for (const activation of activations) {
@@ -559,7 +641,7 @@ describeMathCPUAndGPU('SimpleRNN Tensor', () => {
       }
       expectTensorsClose(
           output,
-          K.scalarTimesArray(
+          tfc.mul(
               scalar(expectedElementValue), tfc.ones([batchSize, units])));
     });
   }
@@ -597,11 +679,11 @@ describeMathCPUAndGPU('SimpleRNN Tensor', () => {
       const outputT1 = K.sliceAlongFirstAxis(timeMajorOutput, 1, 1);
       expectTensorsClose(
           outputT0,
-          K.scalarTimesArray(
+          tfc.mul(
               scalar(inputSize + 1), tfc.ones([1, batchSize, units])));
       expectTensorsClose(
           outputT1,
-          K.scalarTimesArray(
+          tfc.mul(
               scalar((inputSize + 1) * (units + 1)),
               tfc.ones([1, batchSize, units])));
       if (returnState) {
@@ -669,13 +751,13 @@ describeMathCPUAndGPU('SimpleRNN Tensor', () => {
     }
     expectTensorsClose(
         simpleRNN.getWeights()[0],
-        K.scalarTimesArray(scalar(0.8484658), tfc.ones([4, 1])));
+        tfc.mul(scalar(0.8484658), tfc.ones([4, 1])));
     expectTensorsClose(
         simpleRNN.getWeights()[1],
-        K.scalarTimesArray(scalar(0.8484799), tfc.ones([1, 1])));
+        tfc.mul(scalar(0.8484799), tfc.ones([1, 1])));
     expectTensorsClose(
         dense.getWeights()[0],
-        K.scalarTimesArray(scalar(80.967026), tfc.ones([1, 1])));
+        tfc.mul(scalar(80.967026), tfc.ones([1, 1])));
   });
 });
 
@@ -778,7 +860,89 @@ describeMathCPUAndGPU('GRU Tensor', () => {
 
   // TODO(cais): Add test for the default recurrent initializer ('Orthogonal')
   //   when it becomes available.
-  // TODO(cais): Test dropout and recurrentDropout when implemented.
+
+  const dropouts = [0.0, 0.1];
+  const trainings = [true, false];
+  for (const training of trainings) {
+    for (const dropout of dropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, dropout=${dropout}`;
+      it(testTitle, () => {
+        const gru = tfl.layers.gru({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          dropout,
+          implementation: 1
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(gru.apply(input, kwargs) as Tensor);
+          if (dropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(3  * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, inputSize], 0, 1, 'float32');
+          } else {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
+
+  const recurrentDropouts = [0.0, 0.1];
+  for (const training of trainings) {
+    for (const recurrentDropout of recurrentDropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, recurrentDropout=${recurrentDropout}`;
+      it(testTitle, () => {
+        const gru = tfl.layers.gru({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          recurrentDropout,
+          implementation: 1
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(gru.apply(input, kwargs) as Tensor);
+          if (recurrentDropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(3 * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, units], 0, 1, 'float32');
+          } else {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
 
   const implementations = [1, 2];
   const returnStateValues = [false, true];
@@ -808,14 +972,14 @@ describeMathCPUAndGPU('GRU Tensor', () => {
           let expectedOutput: Tensor;
           if (returnSequences) {
             const outputs = goldenOutputElementValues.map(
-                value => K.scalarTimesArray(
+                value => tfc.mul(
                     scalar(value), tfc.ones([1, batchSize, units])));
             expectedOutput = tfc.transpose(
                 K.concatAlongFirstAxis(
                     K.concatAlongFirstAxis(outputs[0], outputs[1]), outputs[2]),
                 [1, 0, 2]);
           } else {
-            expectedOutput = K.scalarTimesArray(
+            expectedOutput = tfc.mul(
                 scalar(goldenOutputElementValueFinal),
                 tfc.ones([batchSize, units]));
           }
@@ -825,7 +989,7 @@ describeMathCPUAndGPU('GRU Tensor', () => {
             expectTensorsClose(output[0], expectedOutput);
             expectTensorsClose(
                 output[1],
-                K.scalarTimesArray(
+                tfc.mul(
                     scalar(goldenOutputElementValueFinal),
                     tfc.ones([batchSize, units])));
           } else {
@@ -1033,7 +1197,89 @@ describeMathCPUAndGPU('LSTM Tensor', () => {
 
   // TODO(cais): Add test for the default recurrent initializer ('Orthogonal')
   //   when it becomes available.
-  // TODO(cais): Test dropout and recurrentDropout when implemented.
+
+  const dropouts = [0.0, 0.1];
+  const trainings = [true, false];
+  for (const training of trainings) {
+    for (const dropout of dropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, dropout=${dropout}`;
+      it(testTitle, () => {
+        const lstm = tfl.layers.lstm({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          dropout,
+          implementation: 1
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(lstm.apply(input, kwargs) as Tensor);
+          if (dropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(4 * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, inputSize], 0, 1, 'float32');
+          } else {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
+
+  const recurrentDropouts = [0.0, 0.1];
+  for (const training of trainings) {
+    for (const recurrentDropout of recurrentDropouts) {
+      const testTitle =
+          `returnSequences=false, returnState=false, useBias=true,` +
+          ` ${training}, recurrentDropout=${recurrentDropout}`;
+      it(testTitle, () => {
+        const lstm = tfl.layers.lstm({
+          units,
+          kernelInitializer: 'ones',
+          recurrentInitializer: 'ones',
+          biasInitializer: 'ones',
+          recurrentDropout,
+          implementation: 1
+        });
+        const kwargs:Kwargs = {};
+        if (training) {
+          kwargs['training'] = true;
+        }
+        const input = tfc.ones([batchSize, timeSteps, inputSize]);
+        spyOn(tfc, 'randomUniform').and.callThrough();
+        let numTensors = 0;
+        for (let i = 0; i < 2; i++){
+          tfc.dispose(lstm.apply(input, kwargs) as Tensor);
+          if (recurrentDropout !== 0.0 && training) {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(4 * (i + 1));
+            expect(tfc.randomUniform).toHaveBeenCalledWith(
+              [batchSize, units], 0, 1, 'float32');
+          } else {
+            expect(tfc.randomUniform).toHaveBeenCalledTimes(0);
+          }
+          if (i === 0) {
+            numTensors = tfc.memory().numTensors;
+          } else {
+            expect(tfc.memory().numTensors).toEqual(numTensors);
+          }
+        }
+      });
+    }
+  }
 
   const implementations: Array<(1 | 2)> = [1, 2];
   const returnStateValues = [false, true];
@@ -1066,16 +1312,16 @@ describeMathCPUAndGPU('LSTM Tensor', () => {
 
           let expectedOutput: Tensor;
           if (returnSequences) {
-            const outputAtT0 = K.scalarTimesArray(
+            const outputAtT0 = tfc.mul(
                 scalar(goldenOutputElementValueAtT0),
                 tfc.ones([1, batchSize, units]));
-            const outputAtT1 = K.scalarTimesArray(
+            const outputAtT1 = tfc.mul(
                 scalar(goldenOutputElementValueAtT1),
                 tfc.ones([1, batchSize, units]));
             expectedOutput = tfc.transpose(
                 K.concatAlongFirstAxis(outputAtT0, outputAtT1), [1, 0, 2]);
           } else {
-            expectedOutput = K.scalarTimesArray(
+            expectedOutput = tfc.mul(
                 scalar(goldenOutputElementValueAtT1),
                 tfc.ones([batchSize, units]));
           }
@@ -1085,12 +1331,12 @@ describeMathCPUAndGPU('LSTM Tensor', () => {
             expectTensorsClose(output[0], expectedOutput);
             expectTensorsClose(
                 output[1],
-                K.scalarTimesArray(
+                tfc.mul(
                     scalar(goldenHStateElementValue),
                     tfc.ones([batchSize, units])));
             expectTensorsClose(
                 output[2],
-                K.scalarTimesArray(
+                tfc.mul(
                     scalar(goldenCStateElementValue),
                     tfc.ones([batchSize, units])));
           } else {

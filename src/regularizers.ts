@@ -11,8 +11,10 @@
 /* original source: keras/regularizers.py */
 
 // tslint:disable:max-line-length
-import {abs, add, doc, Scalar, serialization, sum, Tensor, tidy, zeros} from '@tensorflow/tfjs-core';
+import * as tfc from '@tensorflow/tfjs-core';
+import {abs, add, Scalar, serialization, sum, Tensor, tidy, zeros} from '@tensorflow/tfjs-core';
 
+import {getScalar} from './backend/state';
 import * as K from './backend/tfjs_backend';
 import {deserializeKerasObject, serializeKerasObject} from './utils/generic_utils';
 // tslint:enable:max-line-length
@@ -47,7 +49,7 @@ export interface L2Config {
  * Adds a term to the loss to penalize large weights:
  * loss += sum(l1 * abs(x)) + sum(l2 * x^2)
  */
-@doc({heading: 'Regularizers', namespace: 'regularizers'})
+/** @doc {heading: 'Regularizers', namespace: 'regularizers'} */
 export class L1L2 extends Regularizer {
   static className = 'L1L2';
 
@@ -63,8 +65,8 @@ export class L1L2 extends Regularizer {
     this.hasL1 = l1 !== 0;
     this.hasL2 = l2 !== 0;
 
-    this.l1 = K.getScalar(l1);
-    this.l2 = K.getScalar(l2);
+    this.l1 = getScalar(l1);
+    this.l2 = getScalar(l2);
   }
 
   /**
@@ -75,12 +77,11 @@ export class L1L2 extends Regularizer {
     return tidy(() => {
       let regularization: Tensor = zeros([1]);
       if (this.hasL1) {
-        regularization =
-            add(regularization, sum(K.scalarTimesArray(this.l1, abs(x))));
+        regularization = add(regularization, sum(tfc.mul(this.l1, abs(x))));
       }
       if (this.hasL2) {
         regularization =
-            add(regularization, sum(K.scalarTimesArray(this.l2, K.square(x))));
+            add(regularization, sum(tfc.mul(this.l2, K.square(x))));
       }
       return regularization.asScalar();
     });
